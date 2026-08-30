@@ -37,11 +37,23 @@ logging.basicConfig(
 )
 log = logging.getLogger("boris")
 
-BOT_TOKEN = os.environ.get("BORIS_BOT_TOKEN", "")
+# Поддерживаем несколько распространённых названий переменной с токеном —
+# на разных хостингах (и в разных шаблонах bothost) поле может называться по-разному.
+_TOKEN_ENV_NAMES = ["BOT_TOKEN", "BORIS_BOT_TOKEN", "TOKEN", "TELEGRAM_TOKEN", "TELEGRAM_BOT_TOKEN"]
+BOT_TOKEN = ""
+for _name in _TOKEN_ENV_NAMES:
+    _val = os.environ.get(_name, "").strip()
+    if _val:
+        BOT_TOKEN = _val
+        break
 
 if not BOT_TOKEN:
-    print("ОШИБКА: переменная окружения BORIS_BOT_TOKEN не задана (или пустая).", flush=True)
-    print("Задай её в настройках проекта на bothost и перезапусти бота.", flush=True)
+    print(
+        "ОШИБКА: не нашла токен бота ни в одной из переменных окружения: "
+        + ", ".join(_TOKEN_ENV_NAMES),
+        flush=True,
+    )
+    print("Проверь, что токен вписан в одну из них в настройках проекта на bothost.", flush=True)
     sys.exit(1)
 
 bot = Bot(token=BOT_TOKEN)
