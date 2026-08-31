@@ -12,6 +12,8 @@ import logging
 
 import db
 from parsers.detect import detect_report_type
+from parsers import ozon as parse_ozon
+from parsers import wb as parse_wb
 from parsers.ozon import parse_ozon_report, get_period as get_period_ozon
 from parsers.wb import parse_wb_report, get_period as get_period_wb
 
@@ -37,29 +39,39 @@ def _process_one(job: UploadJob) -> dict:
     Выполняется в отдельном потоке через asyncio.to_thread, чтобы не блокировать event loop."""
     kind = detect_report_type(job.file_path)
     if kind == "unknown":
+        db.log_skipped_file(job.filename, "unknown", None, "error", "не распознан тип файла")
         return {"status": "error", "message": f"«{job.filename}» — не похож на отчёт Ozon или ВБ, пропускаю."}
 
     if kind == "ozon":
         period = get_period_ozon(job.file_path)
         rows = parse_ozon_report(job.file_path, job.filename)
+        chash = parse_ozon.content_hash(rows) if hasattr(parse_ozon, "content_hash") else None
     else:
         period = get_period_wb(job.file_path)
         rows = parse_wb_report(job.file_path, job.filename)
+        chash = parse_wb.content_hash(rows) if hasattr(parse_wb, "content_hash") else None
 
-    if db.file_already_processed(job.filename, kind):
-        return {"status": "duplicate",
-                "message": f"«{job.filename}» — этот файл уже был загружен раньше, пропускаю."}
+    # проверка по содержимому — ловит повторную загрузку того же отчёта
+    # даже если файл называется по-другому (частый случай при переcкачивании)
+    if chash:
+        prev_filename = db.find_by_content_hash(chash, kind)
+        if prev_filename:
+            db.log_skipped_file(job.filename, kind, period, "duplicate", f"дубликат {prev_filename}")
+            return {"status": "duplicate",
+                    "message": f"«{job.filename}» — это те же данные, что уже были загружены "
+                               f"ранее как «{prev_filename}», пропускаю (не задваиваю)."}
 
-    db.insert_transactions(rows)
-    db.log_processed_file(job.filename, kind, period[0], period[1], len(rows), "ok")
+    file_id = db.insert_report(rows, job.filename, kind, period, chash)
 
     return {
         "status": "ok",
         "platform": kind,
         "period": period,
         "rows": len(rows),
+        "file_id": file_id,
         "message": f"«{job.filename}» — {('Ozon' if kind=='ozon' else 'ВБ')}, "
-                   f"{period[0].strftime('%d.%m.%Y')}–{period[1].strftime('%d.%m.%Y')}, строк: {len(rows)}",
+                   f"{period[0].strftime('%d.%m.%Y')}–{period[1].strftime('%d.%m.%Y')}, "
+                   f"строк: {len(rows)} (№{file_id} в базе — этим номером можно удалить через /delete)",
     }
 
 
