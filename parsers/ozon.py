@@ -9,6 +9,8 @@
   количества товара используем только "Выручка", иначе будет утроение).
 """
 import pandas as pd
+import hashlib
+import json
 
 
 def parse_ozon_report(file_path: str, source_name: str) -> list[dict]:
@@ -45,3 +47,12 @@ def get_period(file_path: str):
     df = pd.read_excel(file_path, header=1)
     dates = pd.to_datetime(df["Дата начисления"]).dropna()
     return dates.min().date(), dates.max().date()
+
+
+def content_hash(rows: list[dict]) -> str:
+    """Хэш данных отчёта (без имени файла) — чтобы ловить повторную загрузку
+    того же отчёта под другим именем файла."""
+    normalized = [{k: v for k, v in r.items() if k != "source_file"} for r in rows]
+    normalized.sort(key=lambda r: json.dumps(r, sort_keys=True, default=str))
+    blob = json.dumps(normalized, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
